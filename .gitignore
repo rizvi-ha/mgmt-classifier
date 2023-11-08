@@ -3,3 +3,6 @@ venv/
 
 #Ignore personal dev notes
 mgmtnotes.txt
+
+#Ignore ipynb checkpoints
+.ipynb_checkpoints/
