@@ -1,5 +1,5 @@
-#This file takes in a pathlist of .nii,gz and makes them coregistered,
-# resampled, and skull stripped
+#This file takes in a pathlist of .nii,gz and makes them coregistered
+# to the t1, and skull stripped
 
 import os
 import subprocess
@@ -9,6 +9,7 @@ import time
 
 dataset_all = pd.read_csv('pathlist.csv', usecols=[1,2,3,4])
 dataset_all.head()
+t1 = dataset_all['t1']
 t1c = dataset_all['t1c']
 t2 = dataset_all['t2']
 flair = dataset_all['flair']
@@ -18,7 +19,7 @@ def convert_paths(pathlist):
     newlist = [p.replace('/trials', '/shares/trials') for p in pathlist]
     return newlist
 
-
+t1 = convert_paths(t1)
 t1c = convert_paths(t1c)
 t2 = convert_paths(t2)
 flair = convert_paths(flair)
@@ -42,31 +43,14 @@ def process_image(file_path, atlas_path):
         print('Already done!')
         return
     
-    coreg_command = ['flirt -in ' + file_path + ' -ref ' + atlas_path + ' -out ' + coreg_output + ' -bins 256 -cost normmi -searchrx -180 180 -searchry -180 180 -searchrz -180 180 -dof 12  -interp trilinear' ]
-    coreg_command2 = ['flirt -in ' + coreg_output + ' -ref ' + coreg_output + ' -out ' + coreg_output + ' -applyisoxfm 1']
+    coreg_command = ['flirt -in ' + file_path + ' -ref ' + atlas_path + ' -out ' + coreg_output + ' -bins 128 -cost normmi -searchrx -45 45 -searchry -45 45 -searchrz -45 45 -dof 6  -interp trilinear' ]
 
     try:
         subprocess.run(coreg_command, shell=True, timeout=400, capture_output = True)
-        subprocess.run(coreg_command2, shell=True, timeout=300)
     except:
         print(coreg_output + ' failed. Continuing')
         return
 
-    runn = True
-    starttryremove = time.time()
-    clean_command = ["rm " + file_path + " " + parent_folder + filename]
-
-    while (runn):
-        try: 
-            subprocess.run(clean_command)
-            runn = False
-        except:
-            if (time.time() - starttryremove) > 2:
-                print("couldnt clean up")
-                return
-            continue
-
-    print(coreg_output)
     return
     
 def skull_strip_batch(folder_path):
@@ -75,56 +59,67 @@ def skull_strip_batch(folder_path):
         print("Skull stripping already done.")
         return
     
-    bet_command = ["hd-bet -i " + folder_path + " -device cpu -mode fast -tta 0 -s 0"]
-    subprocess.run(bet_command, shell=True)
-    print(folder_path)
-
+    bet_command = ["hd-bet -i " + folder_path + " -mode fast -tta 0 -s 0"]
+    subprocess.run(bet_command, shell=True, stdout=open(os.devnull, 'w'), stderr=subprocess.STDOUT)
     return
 
-def process_patient(t1c_path, t2_path, flair_path, template, patientno):
+def process_patient(t1_path, t1c_path, t2_path, flair_path, patientno):
+
+    t1_output = t1_path.replace('.nii.gz', '.special.nii.gz')
+    parent_folder0, filename0 = find_parent_folder(t1_output)
+    t1_target = parent_folder0 + "reg/" + filename0
+    
     t1c_output = t1c_path.replace('.nii.gz', '.special.nii.gz')
     parent_folder1, filename1 = find_parent_folder(t1c_output)
-    t1c_target = parent_folder1 + "proc/" + filename1
+    t1c_target = parent_folder1 + "reg/" + filename1
 
     t2_output = t2_path.replace('.nii.gz', '.special.nii.gz')
     parent_folder2, filename2 = find_parent_folder(t2_output)
-    t2_target = parent_folder2 + "proc/" + filename2
+    t2_target = parent_folder2 + "reg/" + filename2
 
     flair_output = flair_path.replace('.nii.gz', '.special.nii.gz')
     parent_folder3, filename3 = find_parent_folder(flair_output)
-    flair_target = parent_folder3 + "proc/" + filename3
+    flair_target = parent_folder3 + "reg/" + filename3
 
     assert(parent_folder1 == parent_folder2)
-    assert(parent_folder2 == parent_folder3)
+    assert(parent_folder2 == parent_folder0)
 
-    if not os.path.isdir(parent_folder1 + "proc/"):
-        mkdir_command = ["mkdir " + parent_folder1 + "proc/"]
+    if not os.path.isdir(parent_folder1 + "reg/"):
+        mkdir_command = ["mkdir " + parent_folder1 + "reg/"]
         subprocess.run(mkdir_command, shell=True)
 
+    cp_command0 = ["cp " + t1_path + " " + t1_target]
     cp_command1 = ["cp " + t1c_path + " " + t1c_target]
     cp_command2 = ["cp " + t2_path + " " + t2_target]
     cp_command3 = ["cp " + flair_path + " " + flair_target]
 
+    subprocess.run(cp_command0, shell=True)
     subprocess.run(cp_command1, shell=True)
     subprocess.run(cp_command2, shell=True)
     subprocess.run(cp_command3, shell=True)
 
     print('Skull stripping patient#: ' + str(patientno))
     start = time.time()
-    skull_strip_batch(parent_folder1 + "proc/")
+    skull_strip_batch(parent_folder1 + "reg/")
     end = time.time()
     print("Took " + str(end-start) + " seconds to skull strip")
-    
+
+    template_folder, template_filename = find_parent_folder(t1_target)
+    template = template_folder + "_bet/" + template_filename
+
+    print('Registering t1c#: ' + str(patientno))
     start = time.time()
     process_image(t1c_target, template)
     end = time.time()
     print("Took " + str(end-start) + " seconds to register t1c #: " + str(patientno))
 
+    print('Registering t2#: ' + str(patientno))
     start = time.time()
     process_image(t2_target, template)
     end = time.time()
     print("Took " + str(end-start) + " seconds to register t2 #: " + str(patientno))
 
+    print('Registering flair#: ' + str(patientno))
     start = time.time()
     process_image(flair_target, template)
     end = time.time()
@@ -133,11 +128,9 @@ def process_patient(t1c_path, t2_path, flair_path, template, patientno):
     return
     
 
-template = '/shares/trials/_BTIL-LIB_/01_Matlab_Scripts/2_Registration/baseanat2.nii.gz'
-
-paths = zip(t1c, t2, flair)
+paths = zip(t1, t1c, t2, flair)
 patientno = 1
 
-for t1c_path, t2_path, flair_path in zip(tqdm(t1c), t2, flair):
-    process_patient(t1c_path, t2_path, flair_path, template, patientno)
+for t1_path, t1c_path, t2_path, flair_path in zip(tqdm(t1), t1c, t2, flair):
+    process_patient(t1_path, t1c_path, t2_path, flair_path, patientno)
     patientno += 1
