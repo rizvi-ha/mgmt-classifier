@@ -6,3 +6,9 @@ mgmtnotes.txt
 
 #Ignore ipynb checkpoints
 .ipynb_checkpoints/
+
+
+#Probably dont need to have this for security's sake
+pathlist.csv
+
+
